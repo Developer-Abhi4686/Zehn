@@ -1,0 +1,80 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId (UID from Firebase Auth)
+    // Fields:
+    //   - fullName: string (required)
+    //   - email: string (required)
+    //   - role: string ("teacher" or "student") (required)
+    //   - userClass: string (optional)
+    //   - createdAt: string/timestamp (required)
+    //
+    // Collection: memories
+    // Document ID: auto-generated memoryId
+    // Fields:
+    //   - userId: string (required, UID of owner)
+    //   - type: string (required, enum)
+    //   - title: string (required)
+    //   - content: string (required, JSON/Markdown content)
+    //   - createdAt: string/timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['fullName', 'email', 'role', 'createdAt']) &&
+             data.fullName is string && data.fullName.size() > 0 && data.fullName.size() < 100 &&
+             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
+             data.role in ['teacher', 'student'];
+    }
+
+    function isValidMemory(data) {
+      return data.keys().hasAll(['userId', 'type', 'title', 'content', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.type in ['quiz', 'lesson-plan', 'test-paper', 'sample-paper', 'doubt', 'assignment'] &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 1048576; // 1MB limit for safety
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role);
+    }
+
+    match /memories/{memoryId} {
+      allow read: if isDocOwner();
+      allow create: if isAuthenticated() && isValidMemory(request.resource.data);
+      allow update: if isDocOwner() && isValidMemory(request.resource.data);
+      allow delete: if isDocOwner();
+    }
+
+    // Default deny for everything else
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
